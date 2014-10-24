@@ -12,13 +12,13 @@ Gem::Specification.new do |s|
   s.description = %q{Mongify allows you to map your sql data into a mongodb document database with a simple DSL.}
   s.required_ruby_version = ">= 1.8.7"
 
-  s.add_dependency('activerecord', "~> 3.2")
-  s.add_dependency('activesupport', "~> 3.2")
+  s.add_dependency('activerecord')
+  s.add_dependency('activesupport')
   s.add_dependency('mongo', "~> 1.10.2")
   s.add_dependency('bson', "~> 1.10.2")
   s.add_dependency('bson_ext', "~> 1.10.2") unless RUBY_PLATFORM == 'java'
   s.add_dependency('highline', '>= 1.6.1')
-
+  s.add_dependency('cassandra-driver', '~> 1.0.0.beta')
 
   s.add_development_dependency('rspec', '~> 2.0')
   s.add_development_dependency('cucumber', '>= 0.10')
@@ -29,7 +29,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency('mysql2', '~> 0.3.1')
   s.add_development_dependency('watchr', '>= 0.6')
   s.add_development_dependency('rake')
-  s.add_development_dependency('pry-plus')
+  #s.add_development_dependency('pry-plus')
 
   s.files         = `git ls-files`.split("\n")
   s.test_files    = `git ls-files -- {test,spec,features}/*`.split("\n")

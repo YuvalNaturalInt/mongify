@@ -24,7 +24,8 @@ module Mongify
     #   :force => true       # This will force a database drop before processing
     # <em>You're also able to set attributes via the options</em>
     #
-    class NoSqlConnection < Mongify::Database::BaseConnection
+    class MongoDBConnection < Mongify::Database::NoSqlConnection
+      include Mongo
 
 
       #Required fields for a no sql connection
@@ -32,17 +33,9 @@ module Mongify
 
       def initialize(options={})
         super options
-
-      end
-
-      def self.get_nosql_connection(options={})
         @options = options
-        if(@options['adapter'] == 'mongodb')
-          return Mongify::Database::MongoDBConnection.new(options)
-        end
-        if (@options['adapter'] == 'cassandra-driver')
-          return Mongify::Database::CassandraConnection.new(options)
-        end
+
+        adapter 'mongodb' if adapter.nil? || adapter.downcase == "mongo"
       end
 
       # Sets and/or returns a adapter

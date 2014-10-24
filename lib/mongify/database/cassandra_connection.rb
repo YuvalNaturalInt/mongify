@@ -1,4 +1,5 @@
-require 'mongo'
+require 'cassandra'
+
 module Mongify
   module Database
     #
@@ -24,7 +25,7 @@ module Mongify
     #   :force => true       # This will force a database drop before processing
     # <em>You're also able to set attributes via the options</em>
     #
-    class NoSqlConnection < Mongify::Database::BaseConnection
+    class CassandraConnection < Mongify::Database::NoSqlConnection
 
 
       #Required fields for a no sql connection
@@ -32,17 +33,10 @@ module Mongify
 
       def initialize(options={})
         super options
-
-      end
-
-      def self.get_nosql_connection(options={})
         @options = options
-        if(@options['adapter'] == 'mongodb')
-          return Mongify::Database::MongoDBConnection.new(options)
-        end
-        if (@options['adapter'] == 'cassandra-driver')
-          return Mongify::Database::CassandraConnection.new(options)
-        end
+        @keyspace = @database
+
+        adapter 'cassandra-driver' if adapter.nil? || adapter.downcase == "cassandra-driver"
       end
 
       # Sets and/or returns a adapter
@@ -71,8 +65,36 @@ module Mongify
 
       # Sets up a connection to the database
       def setup_connection_adapter
-        connection = Connection.new(host, port)
-        connection.add_auth(database, username, password) if username && password
+        connection = Cassandra.connect(@options)
+        @all_tables = {}
+        keyspace_exists = false
+
+        keyspace = 'system'
+        session  = connection.connect(keyspace)
+
+        #connection.add_auth(database, username, password) if username && password
+        future = session.execute("SELECT keyspace_name, columnfamily_name FROM schema_columnfamilies where keyspace_name = '#{@database}'") # fully asynchronous api
+        future.rows.each do |row|
+
+            if(row['keyspace_name'] == @database)
+              keyspace_exists = true
+              @all_tables[row['columnfamily_name']] = true
+              puts "The keyspace #{row['keyspace_name']} has a table called #{row['columnfamily_name']}"
+            end
+
+        end
+        unless(keyspace_exists)
+          keyspace_definition =
+              "CREATE KEYSPACE #{@database}
+              WITH replication = {
+                'class': 'SimpleStrategy',
+                'replication_factor': 3
+              }"
+          begin
+            session.execute(keyspace_definition)
+          rescue
+          end
+        end
         connection
       end
 
@@ -87,31 +109,78 @@ module Mongify
 
       # Returns true or false depending if we have a connection to a mongo server
       def has_connection?
-        connection.connected?
+        return true
       end
 
       # Returns the database from the connection
       def db
-        @db ||= connection[database]
+
+        unless(@db)
+          @db = connection.connect(database)
+
+        end
+
+        @db
+
       end
 
       # Returns a hash of all the rows from the database of a given collection
       def select_rows(collection)
-        db[collection].find
+        query = "SELECT * FROM #{collection}"
+        db.execute(query)
       end
 
       def select_by_query(collection, query)
-        db[collection].find(query)
+        query = "SELECT * FROM #{collection} WHERE #{get_hash_query(query, 'AND')}"
+        db.execute(query)
+      end
+
+      def create_table(colleciton_name, columns)
+        unless()
+
+          column_defenitions = []
+          primary_keys = []
+            columns.each do |column|
+            name = column.sql_name
+            type = column.type
+            if(type == :key)
+              primary_keys << name
+              type = 'int'
+            end
+            column_defenitions << "#{name} #{type.upcase}"
+          end
+
+          table_definition = "CREATE TABLE #{colleciton_name} (#{column_defenitions.join(', ')}, PRIMARY KEY(#{primary_keys.join(', ')})"
+
+          db.execute(table_definition)
+        end
       end
 
       # Inserts into the collection a given row
       def insert_into(colleciton_name, row)
-        db[colleciton_name].insert(row)
+
+        if(row.kind_of?(Array))
+          row.each do |single_row|
+            insert_single_row(colleciton_name, single_row)
+          end
+        else
+          insert_single_row(colleciton_name, row)
+        end
+
+      end
+
+      def insert_single_row(colleciton_name, row)
+        fields = row.keys.join(",")
+        values = row.values.join(",")
+        query = "INSERT INTO #{colleciton_name} (#{fields}) VALUES (#{values})"
+        db.execute(query)
       end
 
       # Updates a collection item with a given ID with the given attributes
       def update(colleciton_name, id, attributes)
-        db[colleciton_name].update({"_id" => id}, attributes)
+        values = get_hash_query(attributes)
+        query = "UPDATE #{colleciton_name} SET #{values} WHERE id = '#{id}'"
+        db.execute(query)
       end
 
       # Upserts into the collection a given row
@@ -133,24 +202,27 @@ module Mongify
           end
         else
           # no pre_mongified_id, fallback to the upsert method of Mongo
-          db[collection_name].save(row)
+          insert_into(collection_name, row)
+          #db[collection_name].save(row)
         end
       end
 
       # Finds one item from a collection with the given query
       def find_one(collection_name, query)
-        db[collection_name].find_one(query)
+        search_query = get_hash_query(query)
+        search_query = "SELECT * FROM #{collection_name} WHERE #{search_query}"
+        db.execute(search_query)
       end
 
       # Returns a row of a item from a given collection with a given pre_mongified_id
       def get_id_using_pre_mongified_id(colleciton_name, pre_mongified_id)
-        db[colleciton_name].find_one('pre_mongified_id' => pre_mongified_id).try(:[], '_id')
+        find_one(colleciton_name, {'pre_mongified_id' => pre_mongified_id}).try(:[], '_id')
       end
 
       # Removes pre_mongified_id from all records in a given collection
       def remove_pre_mongified_ids(collection_name)
         drop_mongified_index(collection_name)
-        db[collection_name].update({}, { '$unset' => { 'pre_mongified_id' => 1} }, :multi => true)
+        #db[collection_name].update({}, { '$unset' => { 'pre_mongified_id' => 1} }, :multi => true)
       end
 
       # Removes pre_mongified_id from collection
@@ -158,13 +230,13 @@ module Mongify
       # @return True if successful
       # @raise MongoDBError if index isn't found
       def drop_mongified_index(collection_name)
-        db[collection_name].drop_index('pre_mongified_id_1') if db[collection_name].index_information.keys.include?("pre_mongified_id_1")
+        #db[collection_name].drop_index('pre_mongified_id_1') if db[collection_name].index_information.keys.include?("pre_mongified_id_1")
       end
 
       # Creates a pre_mongified_id index to ensure
       # speedy lookup for collections via the pre_mongified_id
       def create_pre_mongified_id_index(collection_name)
-        db[collection_name].create_index([['pre_mongified_id', Mongo::ASCENDING]])
+        #db[collection_name].create_index([['pre_mongified_id', Mongo::ASCENDING]])
       end
 
       # Asks user permission to drop the database
@@ -181,7 +253,11 @@ module Mongify
 
       # Drops the mongodb database
       def drop_database
-        connection.drop_database(database)
+        #connection.drop_database(database)
+      end
+
+      def get_hash_query(query, delimiter = ',')
+        query.map { |key, value| "#{key} = '#{value}'"}.join(delimiter)
       end
 
 

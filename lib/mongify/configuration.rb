@@ -26,6 +26,15 @@ module Mongify
       @mongodb_connection = no_sql_connection(options, &block)
     end
 
+    # Returns a no_sql_connection which is bound to a mongodb adapter
+    # or builds a new no_sql_connection if block is given
+    def cassandra_connection(options={}, &block)
+      return @cassandra_conncetion if @cassandra_connection and !block_given?
+      options.stringify_keys!
+      options['adapter'] ||= 'cassandra-driver'
+      @cassandra_conncetion = no_sql_connection(options, &block)
+    end
+
     # Returns a sql_connection
     # If a block is given, it will be executed on the connection
     # For more information, see {Mongify::Database::SqlConnection}
@@ -39,7 +48,7 @@ module Mongify
     # If a block is given, it will be executed on the connection
     # For more information, see {Mongify::Database::NoSqlConnection}
     def no_sql_connection(options={}, &block)
-      @no_sql_connection ||= Mongify::Database::NoSqlConnection.new(options)
+      @no_sql_connection ||= Mongify::Database::NoSqlConnection.get_nosql_connection(options)
       @no_sql_connection.instance_exec(&block) if block_given?
       @no_sql_connection
     end
