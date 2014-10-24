@@ -35,6 +35,7 @@ module Mongify
         super options
         @options = options
         @keyspace = @database
+        @all_tables = {}
 
         adapter 'cassandra-driver' if adapter.nil? || adapter.downcase == "cassandra-driver"
       end
@@ -65,36 +66,37 @@ module Mongify
 
       # Sets up a connection to the database
       def setup_connection_adapter
-        connection = Cassandra.connect(@options)
-        @all_tables = {}
-        keyspace_exists = false
 
-        keyspace = 'system'
-        session  = connection.connect(keyspace)
+          connection = Cassandra.connect(@options)
+            keyspace_exists = false
 
-        #connection.add_auth(database, username, password) if username && password
-        future = session.execute("SELECT keyspace_name, columnfamily_name FROM schema_columnfamilies where keyspace_name = '#{@database}'") # fully asynchronous api
-        future.rows.each do |row|
+            keyspace = 'system'
+            session  = connection.connect(keyspace)
 
-            if(row['keyspace_name'] == @database)
-              keyspace_exists = true
-              @all_tables[row['columnfamily_name']] = true
-              puts "The keyspace #{row['keyspace_name']} has a table called #{row['columnfamily_name']}"
+            #connection.add_auth(database, username, password) if username && password
+            future = session.execute("SELECT keyspace_name, columnfamily_name FROM schema_columnfamilies where keyspace_name = '#{@database}'") # fully asynchronous api
+            future.rows.each do |row|
+
+              if(row['keyspace_name'] == @database)
+                keyspace_exists = true
+                @all_tables[row['columnfamily_name']] = true
+                puts "The keyspace #{row['keyspace_name']} has a table called #{row['columnfamily_name']}"
+              end
+
+            end
+            unless(keyspace_exists)
+              keyspace_definition =
+                  "CREATE KEYSPACE #{@database}
+                WITH replication = {
+                  'class': 'SimpleStrategy',
+                  'replication_factor': 3
+                }"
+              begin
+                session.execute(keyspace_definition)
+              rescue
+              end
             end
 
-        end
-        unless(keyspace_exists)
-          keyspace_definition =
-              "CREATE KEYSPACE #{@database}
-              WITH replication = {
-                'class': 'SimpleStrategy',
-                'replication_factor': 3
-              }"
-          begin
-            session.execute(keyspace_definition)
-          rescue
-          end
-        end
         connection
       end
 
@@ -136,8 +138,7 @@ module Mongify
       end
 
       def create_table(colleciton_name, columns)
-        unless()
-
+        unless(@all_tables[colleciton_name])
           column_defenitions = []
           primary_keys = []
             columns.each do |column|
@@ -145,14 +146,19 @@ module Mongify
             type = column.type
             if(type == :key)
               primary_keys << name
-              type = 'int'
+              type = 'uuid'
             end
+            type = 'timestamp' if type == :datetime
+            type = 'text' if type == :string
             column_defenitions << "#{name} #{type.upcase}"
           end
 
-          table_definition = "CREATE TABLE #{colleciton_name} (#{column_defenitions.join(', ')}, PRIMARY KEY(#{primary_keys.join(', ')})"
-
-          db.execute(table_definition)
+          table_definition = "CREATE TABLE #{colleciton_name} (#{column_defenitions.join(', ')}, PRIMARY KEY(#{primary_keys.join(', ')}))"
+          begin
+           db.execute(table_definition)
+          rescue Exception => e
+            puts e
+          end
         end
       end
 
@@ -171,7 +177,12 @@ module Mongify
 
       def insert_single_row(colleciton_name, row)
         fields = row.keys.join(",")
-        values = row.values.join(",")
+        values = row.values.map do |value|
+          value = value.iso8601 if value.is_a? Time
+          value = "'#{value}'" unless value.is_a? Numeric
+
+          value
+        end. join(",")
         query = "INSERT INTO #{colleciton_name} (#{fields}) VALUES (#{values})"
         db.execute(query)
       end
