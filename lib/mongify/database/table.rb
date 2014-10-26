@@ -4,7 +4,6 @@ module Mongify
     #  A representation of a sql table and how it should map to a no_sql collection
     #
     # ==== Structure
-    #
     # Structure for defining a table is as follows:
     #   table "table_name", {options} do
     #     # columns go here...
@@ -104,6 +103,7 @@ module Mongify
       # Lets you build a column in the table
       def column(name, type=nil, options={})
         options, type = type, nil if type.is_a?(Hash)
+        options['table_sql_name'] = @sql_name
         type = type.to_sym if type
         add_and_index_column(Mongify::Database::Column.new(name, type, options))
       end
@@ -127,12 +127,25 @@ module Mongify
       # Returns a translated row
       # Takes in a hash of values
       def translate(row, parent=nil)
+        begin
         new_row = {}
         row.each do |key, value|
-          c = find_column(key)
-          new_row.merge!(c.translate(value)) if c.present?
+          begin
+          c = find_column(key.gsub(' ', '_'))
+          translated_column = c.translate(value)
+          new_row.merge!(translated_column) if c.present?
+          rescue Exception => ex
+            puts key
+            puts @column_lookup
+            raise ex
+          end
         end
         run_before_save(new_row, parent)
+        rescue Exception => exception
+          puts exception.message
+          puts exception.backtrace
+          raise exception
+        end
       end
 
 
@@ -204,7 +217,7 @@ module Mongify
 
       # Indexes the column on the sql_name and adds column to the array
       def add_and_index_column(column)
-        @column_lookup[column.sql_name.downcase.to_sym] = @columns.size
+        @column_lookup[column.sql_name.gsub(' ', '_').downcase.to_sym] = @columns.size
         @columns << column
         column
       end

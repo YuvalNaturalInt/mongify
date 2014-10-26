@@ -66,8 +66,8 @@ module Mongify
 
       # Sets up a connection to the database
       def setup_connection_adapter
-
-          connection = Cassandra.connect(@options)
+        begin
+          connection = Cassandra.connect({ hosts: [@host]})
             keyspace_exists = false
 
             keyspace = 'system'
@@ -76,7 +76,7 @@ module Mongify
             #connection.add_auth(database, username, password) if username && password
             future = session.execute("SELECT keyspace_name, columnfamily_name FROM schema_columnfamilies where keyspace_name = '#{@database}'") # fully asynchronous api
             future.rows.each do |row|
-
+              puts row
               if(row['keyspace_name'] == @database)
                 keyspace_exists = true
                 @all_tables[row['columnfamily_name']] = true
@@ -93,9 +93,13 @@ module Mongify
                 }"
               begin
                 session.execute(keyspace_definition)
-              rescue
+              rescue Exception =>  e
+                puts e.message
               end
             end
+        rescue Exception => error
+          puts error.message
+        end
 
         connection
       end
@@ -150,11 +154,19 @@ module Mongify
             end
             type = 'timestamp' if type == :datetime
             type = 'text' if type == :string
+            type = 'int' if type == :integer
             column_defenitions << "#{name} #{type.upcase}"
+          end
+          
+          if(primary_keys.length == 0)
+            columns.each do |column|
+              primary_keys << column.sql_name if column.sql_name == /(.*)id/
+            end
           end
 
           table_definition = "CREATE TABLE #{colleciton_name} (#{column_defenitions.join(', ')}, PRIMARY KEY(#{primary_keys.join(', ')}))"
           begin
+           
            db.execute(table_definition)
           rescue Exception => e
             puts e
@@ -163,28 +175,40 @@ module Mongify
       end
 
       # Inserts into the collection a given row
-      def insert_into(colleciton_name, row)
+      def insert_into(table, row)
 
         if(row.kind_of?(Array))
           row.each do |single_row|
-            insert_single_row(colleciton_name, single_row)
+            insert_single_row(table, single_row)
           end
         else
-          insert_single_row(colleciton_name, row)
+          insert_single_row(table, row)
         end
 
       end
 
-      def insert_single_row(colleciton_name, row)
-        fields = row.keys.join(",")
-        values = row.values.map do |value|
+      def insert_single_row(table, row)
+        fields = row.keys.map { |key| key.include?(' ') ? "'#{key}'" : key }.join(",")
+        values = row.values.each_with_index.map do |value, index|
+          column = table.find_column(row.keys[index])
+          stringify_value = false
           value = value.iso8601 if value.is_a? Time
-          value = "'#{value}'" unless value.is_a? Numeric
-
+          stringify_value = true unless ((value.is_a? Numeric) || value == "uuid()" || column.type == :boolean || column.type == :decimal )
+          if stringify_value 
+            value = value.gsub("'", "''") unless value.nil?
+            value = "'#{value}'" unless value.nil?
+            value = 'null' if value.nil?
+          end
           value
         end. join(",")
-        query = "INSERT INTO #{colleciton_name} (#{fields}) VALUES (#{values})"
-        db.execute(query)
+        query = "INSERT INTO #{table.sql_name} (#{fields}) VALUES (#{values})"
+       
+        begin
+          db.execute(query, consistency: :one)
+        rescue Exception => error
+           puts query + ', ' + error.message
+           raise error
+        end
       end
 
       # Updates a collection item with a given ID with the given attributes
@@ -264,7 +288,7 @@ module Mongify
 
       # Drops the mongodb database
       def drop_database
-        #connection.drop_database(database)
+        @db.execute("DROP KEYSPACE #{@database}")
       end
 
       def get_hash_query(query, delimiter = ',')

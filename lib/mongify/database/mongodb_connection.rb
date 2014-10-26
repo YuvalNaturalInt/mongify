@@ -96,19 +96,22 @@ module Mongify
       def select_by_query(collection, query)
         db[collection].find(query)
       end
+      
+      def create_table(colleciton_name, columns)
+      end
 
       # Inserts into the collection a given row
-      def insert_into(colleciton_name, row)
-        db[colleciton_name].insert(row)
+      def insert_into(colleciton, row)
+        db[colleciton.sql_name].insert(row)
       end
 
       # Updates a collection item with a given ID with the given attributes
-      def update(colleciton_name, id, attributes)
-        db[colleciton_name].update({"_id" => id}, attributes)
+      def update(colleciton, id, attributes)
+        db[colleciton.sql_name].update({"_id" => id}, attributes)
       end
 
       # Upserts into the collection a given row
-      def upsert(collection_name, row)
+      def upsert(colleciton, row)
         # We can't use the save method of the Mongo collection
         # The reason is that it detects duplicates using _id
         # but we should detect it using pre_mongified_id instead
@@ -118,15 +121,15 @@ module Mongify
 
         if row.has_key?(:pre_mongified_id) || row.has_key?('pre_mongified_id')
           id = row[:pre_mongified_id] || row['pre_mongified_id']
-          duplicate = find_one(collection_name, {"pre_mongified_id" => id})
+          duplicate = find_one(colleciton.sql_name, {"pre_mongified_id" => id})
           if duplicate
-            update(collection_name, duplicate[:_id] || duplicate["_id"], row)
+            update(colleciton, duplicate[:_id] || duplicate["_id"], row)
           else
-            insert_into(collection_name, row)
+            insert_into(colleciton, row)
           end
         else
           # no pre_mongified_id, fallback to the upsert method of Mongo
-          db[collection_name].save(row)
+          db[colleciton.sql_name].save(row)
         end
       end
 

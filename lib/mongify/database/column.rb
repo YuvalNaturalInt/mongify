@@ -88,12 +88,16 @@ module Mongify
         when 'id'
           column.as = column.type
           column.type = :key
+        when "#{column.options['table_sql_name']}_id"
+          column.as = column.type
+          column.type = :key
         when /(.*)_id/
           column.references = $1.to_s.pluralize unless column.referenced?
         end
       end
 
       def initialize(sql_name, type=:string, options={})
+        sql_name = sql_name.gsub(' ', '_')
         @sql_name = sql_name
         options, type = type, nil if type.is_a?(Hash)
         self.type = type
@@ -123,7 +127,7 @@ module Mongify
         return {} if ignored?
         case type
           when :key
-            {"pre_mongified_id" => type_cast(value)}
+            {"pre_mongified_id" => type_cast(value), "#{self.name}" => 'uuid()'}
           else
             {"#{self.name}" => type_cast(value)}
         end

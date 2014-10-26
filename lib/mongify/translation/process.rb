@@ -35,7 +35,7 @@ module Mongify
               insert_rows << t.translate(row)
               Mongify::Status.publish('copy_data')
             end
-            no_sql_connection.insert_into(t.name, insert_rows) unless insert_rows.empty?
+            no_sql_connection.insert_into(t, insert_rows) unless insert_rows.empty?
             Mongify::Status.publish('copy_data', :action => 'finish')
           end
         end

@@ -71,7 +71,8 @@ module Mongify
         connection.tables.each do |t|
           columns = []
           connection.columns_for(t).each do |ar_col|
-            columns << Mongify::Database::Column.new(ar_col.name, ar_col.type, :auto_detect => true)
+            column_name = ar_col.name.gsub(' ', '_').downcase
+            columns << Mongify::Database::Column.new(column_name, ar_col.type, { :auto_detect => true, :table_sql_name => t } )
           end
           translation.table(t, :columns => columns)
         end
